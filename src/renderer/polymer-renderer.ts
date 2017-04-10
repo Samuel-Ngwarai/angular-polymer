@@ -1,7 +1,29 @@
-import {Injectable, Inject, Renderer, RootRenderer, RenderComponentType, AnimationPlayer} from '@angular/core';
+import {APP_ID, Injectable, Inject, Renderer, RootRenderer, RenderComponentType, AnimationPlayer, ViewEncapsulation} from '@angular/core';
 import {EventManager, AnimationDriver, DOCUMENT} from '@angular/platform-browser';
+import {SharedCustomStylesHost} from './shared-custom-styles-host';
 
 const Polymer: any = (<any>window).Polymer;
+
+const COMPONENT_REGEX = /%COMP%/g;
+const COMPONENT_VARIABLE = '%COMP%';
+const HOST_ATTR = `_nghost-${COMPONENT_VARIABLE}`;
+const CONTENT_ATTR = `_ngcontent-${COMPONENT_VARIABLE}`;
+
+function flattenStyles(
+        styleShimId: string,
+        styles: Array<any|any[]>,
+        target: string[]): string[] {
+    for (let i = 0; i < styles.length; i++) {
+        let style = styles[i];
+        if (Array.isArray(style)) {
+            flattenStyles(styleShimId, style, target);
+        } else {
+            style = style.replace(COMPONENT_REGEX, styleShimId);
+            target.push(style);
+        }
+    }
+    return target;
+}
 
 /**
  * The polymer renderer takes care of supporting angular > 2.2 shady DOM
@@ -19,9 +41,18 @@ const Polymer: any = (<any>window).Polymer;
  * instead of the default platformBrowser and platformBrowserDynamic.
  */
 export class PolymerRenderer implements Renderer {
+    private _styles: string[];
+    private _contentAttr: string;
+    private _hostAttr: string;
+
     constructor(private _rootRenderer: PolymerRootRenderer,
                 private componentType: RenderComponentType,
-                private _animationDriver: AnimationDriver) {
+                private _animationDriver: AnimationDriver,
+                styleShimId: string) {
+      this._styles = flattenStyles(styleShimId, componentType.styles, []);
+      this._rootRenderer.sharedCustomStylesHost.addStyles(this._styles);
+      this._contentAttr = CONTENT_ATTR.replace(COMPONENT_REGEX, styleShimId);
+      this._hostAttr  = HOST_ATTR.replace(COMPONENT_REGEX, styleShimId);
     }
 
     selectRootElement(selectorOrElement: string|Element): Element {
@@ -40,6 +71,9 @@ export class PolymerRenderer implements Renderer {
 
     createElement(parent: Element|DocumentFragment, name: string): Element {
         const el: Element = document.createElement(name);
+        if (this._contentAttr) {
+            el.setAttribute(this._contentAttr, '');
+        }
         if (parent) {
             Polymer.dom(parent).appendChild(el);
         }
@@ -47,6 +81,9 @@ export class PolymerRenderer implements Renderer {
     }
 
     createViewRoot(hostElement: Element): Element|DocumentFragment {
+        if (this._hostAttr) {
+            hostElement.setAttribute(this._hostAttr, '');
+        }
         return hostElement;
     }
 
@@ -189,7 +226,9 @@ export class PolymerRootRenderer implements RootRenderer {
 
     constructor(@Inject(DOCUMENT) public document: any,
                 public eventManager: EventManager,
-                public animationDriver: AnimationDriver) {
+                public sharedCustomStylesHost: SharedCustomStylesHost,
+                public animationDriver: AnimationDriver,
+                @Inject(APP_ID) public appId: string) {
     }
 
     renderComponent(componentType: RenderComponentType): Renderer {
@@ -198,7 +237,8 @@ export class PolymerRootRenderer implements RootRenderer {
             renderer = new PolymerRenderer(
                 this,
                 componentType,
-                this.animationDriver
+                this.animationDriver,
+                `${this.appId}-${componentType.id}`
             );
             this.registeredComponents.set(componentType.id, renderer);
         }
